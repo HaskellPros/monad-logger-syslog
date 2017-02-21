@@ -3,6 +3,7 @@
 
 module System.Log.MonadLogger.Syslog
        ( runSyslogLoggingT
+       , runUnsafeSyslogLoggingT
        , syslogOutput
        , defaultSyslogOutput
        , formattedSyslogOutput
@@ -13,17 +14,17 @@ import Control.Monad.Logger
 import System.Posix.Syslog
 import Data.Text (unpack)
 import System.Log.FastLogger (fromLogStr)
-#if MIN_VERSION_hsyslog(4,0,0)
-#else
-import qualified Data.ByteString.Char8 as BS8
-#endif
 
 -- | Runs a 'LoggingT', sending its output to the syslog.  The logs
 -- are formatted the same as 'runStdoutLoggingT', but the 'LogLevel'
 -- is converted to a syslog priority value (but still included in the
 -- log message).
-runSyslogLoggingT :: LoggingT m a -> m a
-runSyslogLoggingT = (`runLoggingT` syslogOutput)
+runSyslogLoggingT :: SyslogFn -> LoggingT m a -> m a
+runSyslogLoggingT syslog = (`runLoggingT` syslogOutput syslog)
+
+runUnsafeSyslogLoggingT :: LoggingT m a -> m a
+runUnsafeSyslogLoggingT = runSyslogLoggingT syslogUnsafe
+
 
 -- TODO: useSyslog allows giving a source name and should be more
 -- efficient But it assumes IO.  Perhaps MonadBaseControl should be
@@ -41,34 +42,28 @@ runSyslogLoggingT source action =
 -}
 
 -- | Same as 'defaultSyslogOutput'.
-syslogOutput :: Loc -> LogSource -> LogLevel -> LogStr -> IO ()
+syslogOutput :: SyslogFn -> Loc -> LogSource -> LogLevel -> LogStr -> IO ()
 syslogOutput = defaultSyslogOutput
 
 -- | This invokes 'formattedSyslogOutput' with 'defaultLogStr'.  This
 -- means that the resulting log messages are the same as the default
 -- format used by "Control.Monad.Logger".
-defaultSyslogOutput :: Loc -> LogSource -> LogLevel -> LogStr -> IO ()
+defaultSyslogOutput :: SyslogFn -> Loc -> LogSource -> LogLevel -> LogStr -> IO ()
 defaultSyslogOutput = formattedSyslogOutput defaultLogStr
 
 -- | Given a "Control.Monad.Logger" log formatter, this writes the log
 -- to the syslog,
 formattedSyslogOutput :: (Loc -> LogSource -> LogLevel -> LogStr -> LogStr)
+                      -> SyslogFn
                       -> Loc
                       -> LogSource
                       -> LogLevel
                       -> LogStr
                       -> IO ()
-formattedSyslogOutput f l s level msg =
-#if MIN_VERSION_hsyslog(4,0,0)
-    withSyslog defaultConfig $ \syslog ->
-        syslog USER
-            (levelToPriority level)
-            (fromLogStr $ f l s level msg)
-#else
-    syslog
+formattedSyslogOutput f syslog l s level msg =
+    syslog USER
         (levelToPriority level)
-        (BS8.unpack $ fromLogStr $ f l s level msg)
-#endif
+        (fromLogStr $ f l s level msg)
 
 levelToPriority :: LogLevel -> Priority
 levelToPriority LevelDebug = Debug
